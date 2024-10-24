@@ -38,17 +38,18 @@ size_t get_directory_files(char* dir_path, struct dirfile** dir_files) {
 
     size_t size = 0;
     size_t capacity = 1;
-    struct dirfile *files = realloc(NULL, sizeof(*files) * capacity);
+    struct dirfile* files = realloc(NULL, sizeof(*files) * capacity);
 
     char buf[PATH_MAX];
+    char link_buf[PATH_MAX];
 
-    DIR *dirfd = opendir(dir_path);
+    DIR* dirfd = opendir(dir_path);
     if (dirfd == NULL) {
         return 0;
     }
 
     while (1) {
-        struct dirent *de = readdir(dirfd);
+        struct dirent* de = readdir(dirfd);
         if (de == NULL) {
             break;
         }
@@ -61,6 +62,13 @@ size_t get_directory_files(char* dir_path, struct dirfile** dir_files) {
         snprintf(buf, PATH_MAX, "%s/%s", dir_path, de->d_name);
         files[size].name = strdup(de->d_name);
         lstat(buf, &files[size].st);
+        if (de->d_type == DT_LNK) {
+            size_t n = readlink(buf, link_buf, sizeof(link_buf) / sizeof(*link_buf));
+            link_buf[n] = 0;
+            files[size].link = strdup(link_buf);
+        } else {
+            files[size].link = NULL;
+        }
         size++;
     }
 
@@ -166,12 +174,22 @@ char* format_file_mode(mode_t mode) {
 char* get_user_name(unsigned uid) {
     struct passwd* psw;
     psw = getpwuid(uid);
+    if (!psw) {
+        char* res = NULL;
+        asprintf(&res, "%u", uid);
+        return res;
+    }
     return strdup(psw->pw_name);
 }
 
 char* get_group_name(unsigned gid) {
     struct group* grp;
     grp = getgrgid(gid);
+    if (!grp) {
+        char* res = NULL;
+        asprintf(&res, "%u", gid);
+        return res;
+    }
     return strdup(grp->gr_name);
 }
 
@@ -181,7 +199,7 @@ char* format_date(time_t mtime) {
     return strdup(date_buf);
 }
 
-char* format_name(char* name, mode_t mode) {
+char* format_name(char* name, char* links_to, mode_t mode) {
     char* start = "\x1B[0m";
 
     if ((mode & S_IFMT) == S_IFDIR) {
@@ -194,8 +212,18 @@ char* format_name(char* name, mode_t mode) {
 
     char buf[1024];
 
-    snprintf(buf, sizeof(buf) / sizeof(*buf), "%s%s\x1B[0m", start, name);
+    if ((mode & S_IFMT) == S_IFLNK && links_to) {
+        snprintf(buf, sizeof(buf) / sizeof(*buf), "%s%s\x1B[0m -> %s", start, name, links_to);
+    } else {
+        snprintf(buf, sizeof(buf) / sizeof(*buf), "%s%s\x1B[0m", start, name);
+    }
 
+    return strdup(buf);
+}
+
+char* format_ulong(unsigned long x) {
+    char buf[100];
+    snprintf(buf, sizeof(buf) / sizeof(*buf), "%lu", x);
     return strdup(buf);
 }
 
@@ -247,7 +275,7 @@ int main(int argc, char* argv[]) {
 
     if (!list_view) {
         for (size_t i = 0; i < dir_files_cnt; i++) {
-            char* name = format_name(dir_files[i].name, dir_files[i].st.st_mode);
+            char* name = format_name(dir_files[i].name, NULL, dir_files[i].st.st_mode);
             printf("%s\t", name);
             free(name);
         }
@@ -257,14 +285,50 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    char** users = calloc(dir_files_cnt, sizeof(*users));
+    char** groups = calloc(dir_files_cnt, sizeof(*groups));
+
+    size_t total_size = 0;
+    size_t max_user_size = 0, max_group_size = 0, max_size_size = 0, max_nlinks_size = 0;
     for (size_t i = 0; i < dir_files_cnt; i++) {
-        char* mode_str = format_file_mode(dir_files[i].st.st_mode);
+        total_size += (dir_files[i].st.st_blocks / 2); // Block - 512b, output - 1024b
         char* user_str = get_user_name(dir_files[i].st.st_uid);
         char* group_str = get_group_name(dir_files[i].st.st_gid);
-        char* date_str = format_date(dir_files[i].st.st_mtime);
-        char* name = format_name(dir_files[i].name, dir_files[i].st.st_mode);
 
-        printf("%s %2ld %s %s %7ld %s %s\n",
+        char* size_str = format_ulong(dir_files[i].st.st_size);
+        char* nlinks_str = format_ulong(dir_files[i].st.st_nlink);
+
+        max_user_size = (max_user_size < strlen(user_str) ? strlen(user_str) : max_user_size);
+        max_group_size = (max_group_size < strlen(group_str) ? strlen(group_str) : max_group_size);
+        max_size_size = (max_size_size < strlen(size_str) ? strlen(size_str) : max_size_size);
+        max_nlinks_size = (max_nlinks_size < strlen(nlinks_str) ? strlen(nlinks_str) : max_nlinks_size);
+
+        users[i] = user_str;
+        groups[i] = group_str;
+
+        free(nlinks_str);
+        free(size_str);
+    }
+
+    char format_buf[100];
+    snprintf(format_buf, 
+             sizeof(format_buf) / sizeof(*format_buf),
+             "%%s %%%luld %%%lus %%%lus %%%lud %%s %%s\n", 
+             max_nlinks_size,
+             max_user_size,
+             max_group_size, 
+             max_size_size
+             );
+
+    printf("total %lu\n", total_size);
+    for (size_t i = 0; i < dir_files_cnt; i++) {
+        char* mode_str = format_file_mode(dir_files[i].st.st_mode);
+        char* user_str = users[i];
+        char* group_str = groups[i];
+        char* date_str = format_date(dir_files[i].st.st_mtime);
+        char* name = format_name(dir_files[i].name, dir_files[i].link, dir_files[i].st.st_mode);
+
+        printf(format_buf, 
                mode_str,
                dir_files[i].st.st_nlink,
                user_str,
@@ -281,6 +345,8 @@ int main(int argc, char* argv[]) {
         free(mode_str);
     }
 
+    free(groups);
+    free(users);
     free(dir_files);
     return 0;
 }
