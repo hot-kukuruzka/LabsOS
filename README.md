@@ -9,3 +9,7 @@
 ###  lab4 - утилита chmod
 
 ###  lab5 - ~~примитивный~~ архиватор
+
+###  lab6 - pipe&fifo
+
+###  lab7 - shared memory
