@@ -13,3 +13,7 @@
 ###  lab6 - pipe&fifo
 
 ###  lab7 - shared memory
+
+###  lab8 - потоки & mutex
+
+###  lab9 - shared memory with semaphore
