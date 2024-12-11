@@ -10,7 +10,17 @@
 #include <string.h>
 
 #define MAX_BUF 1024
+#define MAX_TIME 25
 char buf[MAX_BUF];
+
+char* format_time(time_t time) {
+    char* buf = calloc(MAX_TIME, sizeof(*buf));
+
+    struct tm* time_info = localtime(&time);
+    strftime(buf, MAX_TIME, "%d.%m.%Y %H:%M:%S", time_info);
+
+    return buf;
+}
 
 // PIPES
 
@@ -24,9 +34,13 @@ int child4pipe(int rfd) {
         goto end;
     }
 
+    char* cur_time_format = format_time(cur_time);
+
     printf("-> Child\n");
-    printf("  Current proccess: timestamp = %ld, PID = %d, PPID = %d\n", cur_time, getpid(), getppid());
+    printf("  Current proccess: time = %s, PID = %d, PPID = %d\n", cur_time_format, getpid(), getppid());
     printf("  From sender: %s\n", buf);
+
+    free(cur_time_format);
 
 end:
     if (res < 0) {
@@ -46,13 +60,17 @@ void test_pipes() {
         goto end;
     }
 
-    int n = snprintf(buf, MAX_BUF, "timestamp = %ld, PID = %d", time(NULL), getpid());
+    char* cur_time_format = format_time(time(NULL));
+
+    int n = snprintf(buf, MAX_BUF, "time = %s, PID = %d", cur_time_format, getpid());
     n++; // '\0'
     if (write(fd[1], buf, n) != n) {
         res = -1;
         goto end;
     }
     close(fd[1]);
+
+    free(cur_time_format);
 
     pid_t child_pid = fork();
     if (child_pid < 0) {
@@ -100,9 +118,13 @@ int child4fifo() {
         goto end;
     }
 
+    char* cur_time_format = format_time(time(NULL));
+
     printf("-> Child\n");
-    printf("  Current proccess: timestamp = %ld, PID = %d, PPID = %d\n", cur_time, getpid(), getppid());
+    printf("  Current proccess: time = %s, PID = %d, PPID = %d\n", cur_time_format, getpid(), getppid());
     printf("  From sender: %s\n", buf);
+
+    free(cur_time_format);
 
     end:
     if (res < 0) {
@@ -137,12 +159,14 @@ void test_fifo() {
         goto end;
     }
 
-    int n = snprintf(buf, MAX_BUF, "timestamp = %ld, PID = %d", time(NULL), getpid());
+    char* cur_time_format = format_time(time(NULL));
+    int n = snprintf(buf, MAX_BUF, "time = %s, PID = %d", cur_time_format, getpid());
     n++; // '\0'
     if (write(fd, buf, n) != n) {
         res = -1;
         goto end;
     }
+    free(cur_time_format);
 
     printf("-> Parent\n");
     printf("  %s, Child PID = %d\n", buf, child_pid);
