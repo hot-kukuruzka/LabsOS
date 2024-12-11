@@ -17,3 +17,7 @@
 ###  lab8 - потоки & mutex
 
 ###  lab9 - shared memory with semaphore
+
+###  lab10 - condvar
+
+###  lab11 - rwlock
