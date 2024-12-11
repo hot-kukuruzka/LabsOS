@@ -12,8 +12,8 @@ const int SIZE = 32;
 int main() {
     int res = 0;
 
-    create_shm:
     int shmfd = shm_open(SHARED_MEMORY_NAME, O_CREAT | O_EXCL | O_RDWR, 0600);
+    create_shm:
     if (shmfd < 0) {
         shmfd = shm_open(SHARED_MEMORY_NAME, O_RDONLY, 0600);
         if (shmfd >= 0) {
