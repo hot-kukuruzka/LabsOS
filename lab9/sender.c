@@ -1,17 +1,19 @@
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ipc.h>
-#include <unistd.h>
-#include <time.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <signal.h>
-#include <sys/sem.h>
 #include <sys/mman.h>
+#include <sys/sem.h>
+#include <time.h>
+#include <unistd.h>
 
 const char* SHARED_MEMORY_NAME = "/lab9";
 const int SIZE = 32;
 const int SEMKEY = 9;
+const int SEMSZ = 2;
+int in_lock = 0;
 int semid = 0;
 
 void sigint_handler(int signum) {
@@ -23,6 +25,12 @@ void sigint_handler(int signum) {
 
     semop(semid, &sb, 1);
 
+    if (in_lock) {
+        sb.sem_num = 1;
+
+        semop(semid, &sb, 1);
+    }
+
     exit(0);
 }
 
@@ -30,7 +38,7 @@ int main() {
     int res = 0;
     struct sembuf sb;
 
-    semid = semget(SEMKEY, 1, S_IRUSR | S_IWUSR);
+    semid = semget(SEMKEY, SEMSZ, S_IRUSR | S_IWUSR);
     if (semid < 0) {
         if (errno != ENOENT) {
             fprintf(stderr, "Failed to get semaphore\n");
@@ -38,15 +46,28 @@ int main() {
             goto end;
         }
 
-        semid = semget(SEMKEY, 1, IPC_EXCL | IPC_CREAT | S_IRUSR | S_IWUSR);
+        semid = semget(SEMKEY, SEMSZ, IPC_EXCL | IPC_CREAT | S_IRUSR | S_IWUSR);
+        if (semid < 0) {
+            fprintf(stderr, "Failed to create semaphore\n");
+            res = -1;
+            goto end;
+        }
+
+        sb = (struct sembuf) {
+            .sem_num = 0,
+            .sem_op = 1,
+            .sem_flg = 0,
+        };
+
+        res = semop(semid, &sb, 1);
         if (res < 0) {
             fprintf(stderr, "Failed to create semaphore\n");
             res = -1;
             goto end;
         }
 
-        sb = (struct sembuf){
-            .sem_num = 0,
+        sb = (struct sembuf) {
+            .sem_num = 1,
             .sem_op = 1,
             .sem_flg = 0,
         };
@@ -59,7 +80,7 @@ int main() {
         }
     }
 
-    sb = (struct sembuf){
+    sb = (struct sembuf) {
         .sem_num = 0,
         .sem_op = -1,
         .sem_flg = IPC_NOWAIT,
@@ -94,9 +115,32 @@ int main() {
     pid_t* sender_pid = (pid_t*) (data + sizeof(*sender_time));
 
     *sender_pid = getpid();
+    sb = (struct sembuf) {
+        .sem_num = 1,
+        .sem_op = -1,
+    };
 
     while (1) {
+        res = semop(semid, &sb, 1);
+        if (res < 0) {
+            fprintf(stderr, "Failed to lock semaphore\n");
+            res = -1;
+            goto end;
+        }
+        in_lock = 1;
+
         *sender_time = time(NULL);
+
+        sb.sem_op *= -1;
+        res = semop(semid, &sb, 1);
+        if (res < 0) {
+            fprintf(stderr, "Failed to unlock semaphore\n");
+            res = -1;
+            goto end;
+        }
+        in_lock = 0;
+        sb.sem_op *= -1;
+
         usleep(100);
     }
 
